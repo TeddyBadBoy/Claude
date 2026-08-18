@@ -4,49 +4,64 @@ Context for Claude Code sessions working in this repository.
 
 ## What this repo is
 
-`TeddyBadBoy/Claude` — a Python project workspace. As of now it contains only
-scaffolding (README, LICENSE, CI, this file, and GitHub's standard Python
-`.gitignore`). There is no application code, no `pyproject.toml`, and no test
-suite yet.
+`drivezip` — a CLI and library for reading large ZIP archives stored on Google
+Drive without downloading them. The whole design rests on one idea: a ZIP's
+central directory lives at the end of the file, and the Drive API serves HTTP
+`Range` requests, so `zipfile.ZipFile` can parse a remote archive through a
+seekable file object that fetches only the bytes it is asked for.
 
-If you are asked to add the first real code, ask which stack/framework is
-intended before scaffolding one — the empty repo does not imply it.
+## Layout
+
+| Path | Role |
+| --- | --- |
+| `drivezip/ranges.py` | `RangeSource` protocol, `LocalFileRangeSource`, `TransferStats` |
+| `drivezip/reader.py` | `RangeReader` — seekable stream over a range source, LRU block cache, read-ahead, tail prefetch |
+| `drivezip/drive.py` | Drive backend: file-id/URL parsing, metadata, ranged GETs, retries |
+| `drivezip/archive.py` | `ZipArchive` — listing, reading, extraction, zip-slip guards |
+| `drivezip/auth.py` | credential resolution (token → service account → cached token → OAuth flow) |
+| `drivezip/cli.py` | `info` / `ls` / `cat` / `get` / `login` |
+| `tests/` | full suite, network-free |
+
+## Invariants worth protecting
+
+- **Nothing downloads the whole archive.** `tests/test_archive.py` and
+  `tests/test_drive.py` assert on bytes transferred; if a change starts
+  streaming entire files, those tests fail. Keep it that way.
+- **Memory is bounded** by `block_size × cache_blocks`, and a single fetch never
+  exceeds what the cache can hold — otherwise a read evicts its own blocks.
+- **Extraction paths are validated** by `_safe_destination` before any write.
+  Absolute paths, `..` traversal and drive letters must stay rejected.
+- **Google libraries are imported lazily** (in `auth.py` and `drive.py`), so the
+  package and the test suite work with only the standard library plus
+  `requests`. Do not hoist those imports to module scope.
+- **Stream defaults are resolved at call time**, not as argument defaults —
+  binding `sys.stderr` at import time breaks output capture.
 
 ## Conventions
 
-- **Python 3.11+.** CI tests against 3.11, 3.12, and 3.13.
-- **Lint and format with `ruff`**; both `ruff check .` and `ruff format --check .`
-  must pass. Default ruff settings apply until a `pyproject.toml` sets otherwise.
-- **Tests with `pytest`**, in `tests/`, named `test_*.py`.
-- Application code lives in a top-level package directory, not at repo root.
+- Python 3.11+; CI tests 3.11, 3.12, 3.13.
+- `ruff check .` and `ruff format --check .` must pass. Note that ruff also
+  formats Python code blocks inside `README.md`.
+- Tests live in `tests/`, named `test_*.py`. Shared doubles go in
+  `tests/helpers.py` (imported as `from helpers import ...`; pytest puts the
+  test directory on `sys.path`), fixtures in `tests/conftest.py`.
+- No network access in tests. The Drive backend is exercised through
+  `FakeSession`, which serves real ranges out of a real ZIP on disk.
 
 ## Commands
 
 ```bash
-ruff check .          # lint
-ruff format .         # format
-pytest                # test
+pip install -e ".[google,dev]"
+ruff check . && ruff format .
+pytest
+
+# manual smoke test against a local archive — the CLI accepts local paths
+python -m drivezip info ./some.zip --stats
+python -m drivezip ls ./some.zip -l
 ```
-
-Nothing is installed by default in a fresh checkout — `pip install ruff pytest`
-first, ideally inside a virtualenv.
-
-## CI
-
-`.github/workflows/ci.yml` runs two jobs on every push to `main` and on every
-pull request:
-
-- `lint` — ruff check + ruff format --check on Python 3.12
-- `test` — pytest across the 3.11/3.12/3.13 matrix; the step no-ops while no
-  `tests/` directory exists, so CI stays green on a code-free repo
-
-The test job installs `requirements.txt` and/or the local package if either
-appears later; add dev dependencies to a `[project.optional-dependencies] dev`
-extra so the existing `pip install -e ".[dev]"` step picks them up.
 
 ## Git
 
-- Default branch is `main`.
-- Do not commit directly to `main`; branch, then open a pull request.
-- Keep `.gitignore` as the upstream GitHub Python template plus project-specific
-  additions at the bottom.
+- Default branch is `main`; work happens on feature branches and lands via PR.
+- Keep `.gitignore` as the upstream GitHub Python template plus additions at the
+  bottom.
