@@ -117,6 +117,28 @@ drivezip cat 1AbCdEf... 'app/config/settings.yaml' | yq .
 drivezip get 1AbCdEf... 'logs/2026-08-18/*.json' -d ./today --flatten --stats
 ```
 
+## Public links — no credentials at all
+
+A Drive file shared with **anyone with the link** can be read over plain HTTP
+ranges, skipping OAuth entirely:
+
+```bash
+drivezip ls   <file-id-or-url> --public -l
+drivezip get  <file-id-or-url> --public 'memory/*' -d ./out --stats
+```
+
+The same source works against any endpoint that honours `Range` — a static file
+server, an object store, a CDN:
+
+```bash
+drivezip ls https://example.com/backups/nightly.zip -l
+```
+
+If the server answers a range request with the whole body, `drivezip` raises
+`RangeNotSupportedError` instead of quietly downloading everything. If Drive
+returns its virus-scan interstitial (which happens when a file is not really
+public), the error says so rather than parsing HTML as a ZIP.
+
 ## Library use
 
 ```python
@@ -132,9 +154,18 @@ with ZipArchive(source) as archive:
     print(archive.stats)  # what it actually cost
 ```
 
-`LocalFileRangeSource` swaps in for a file on disk, and anything implementing
-`RangeSource` (`name`, `size`, `fetch(start, end)`, `close()`) works too — S3,
-a plain HTTP server, whatever serves ranges.
+`LocalFileRangeSource` swaps in for a file on disk, `HttpRangeSource` for any
+URL that honours `Range`, and anything else implementing `RangeSource` (`name`,
+`size`, `fetch(start, end)`, `close()`) works too — S3, a CDN, whatever serves
+ranges.
+
+```python
+from drivezip import HttpRangeSource, ZipArchive, drive_public_url
+
+source = HttpRangeSource(drive_public_url("1cotRGgt..."))  # link-shared file
+with ZipArchive(source) as archive:
+    print(archive.summary())
+```
 
 ## Safety
 

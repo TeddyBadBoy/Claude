@@ -56,4 +56,8 @@ def __getattr__(name: str) -> object:
         from . import drive
 
         return getattr(drive, name)
+    if name in {"HttpRangeSource", "drive_public_url"}:
+        from . import http
+
+        return getattr(http, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

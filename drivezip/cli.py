@@ -34,13 +34,26 @@ def human(nbytes: float) -> str:
 
 
 def open_source(target: str, args: argparse.Namespace) -> RangeSource:
-    """Turn a CLI target into a range source: a local path or a Drive reference."""
+    """Turn a CLI target into a range source: a local path, a URL, or a Drive reference."""
     if target.startswith("local:"):
         return LocalFileRangeSource(target[len("local:") :])
     if os.path.sep in target or target.endswith(".zip"):
         candidate = Path(target)
         if candidate.is_file():
             return LocalFileRangeSource(candidate)
+
+    # A file shared with "anyone with the link" can be read over plain HTTP
+    # ranges, with no credentials involved at all.
+    if getattr(args, "public", False):
+        from .drive import parse_file_id
+        from .http import HttpRangeSource, drive_public_url
+
+        return HttpRangeSource(drive_public_url(parse_file_id(target)))
+
+    if target.startswith(("http://", "https://")) and "drive.google.com" not in target:
+        from .http import HttpRangeSource
+
+        return HttpRangeSource(target)
 
     from .auth import resolve  # imported lazily: local archives need no credentials
     from .drive import DriveRangeSource
@@ -242,6 +255,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tuning.add_argument(
         "--stats", action="store_true", help="report how many bytes crossed the wire"
+    )
+    tuning.add_argument(
+        "--public",
+        action="store_true",
+        help="read a link-shared Drive file over plain HTTP ranges, without credentials",
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
