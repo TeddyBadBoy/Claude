@@ -1,11 +1,14 @@
 """Credential resolution for the Drive backend.
 
-Four ways in, tried in this order:
+Five ways in, tried in this order:
 
 1. an access token passed explicitly or via `DRIVEZIP_ACCESS_TOKEN`
 2. a service-account key file (`--service-account` or `GOOGLE_APPLICATION_CREDENTIALS`)
-3. a cached OAuth user token, refreshed when stale
-4. an interactive OAuth consent flow using a client-secrets file
+3. a service-account key inlined in `DRIVEZIP_SERVICE_ACCOUNT_JSON`, raw or
+   base64-encoded — the shape that fits an environment-variable-only host with
+   no writable config directory
+4. a cached OAuth user token, refreshed when stale
+5. an interactive OAuth consent flow using a client-secrets file
 
 Google libraries are imported lazily so the rest of the package — and the test
 suite — works with nothing but the standard library installed.
@@ -13,6 +16,8 @@ suite — works with nothing but the standard library installed.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 from pathlib import Path
@@ -50,6 +55,10 @@ def resolve(
     if key_file:
         return Credentials(google_credentials=_service_account_credentials(key_file))
 
+    inline = os.environ.get("DRIVEZIP_SERVICE_ACCOUNT_JSON")
+    if inline:
+        return Credentials(google_credentials=_service_account_credentials_from_info(inline))
+
     cached = _cached_user_credentials()
     if cached is not None:
         return Credentials(google_credentials=cached)
@@ -67,6 +76,8 @@ def resolve(
         "no Drive credentials found. Provide one of:\n"
         "  * DRIVEZIP_ACCESS_TOKEN=<token> for a one-off run\n"
         "  * --service-account key.json (or GOOGLE_APPLICATION_CREDENTIALS)\n"
+        "  * DRIVEZIP_SERVICE_ACCOUNT_JSON=<key json, raw or base64> for hosts that\n"
+        "    only pass environment variables\n"
         f"  * an OAuth client-secrets file at {CLIENT_SECRETS_PATH}, then `drivezip login`"
     )
 
@@ -86,6 +97,39 @@ def _service_account_credentials(key_file: str | os.PathLike[str]) -> Any:
         return service_account.Credentials.from_service_account_file(str(path), scopes=SCOPES)
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         raise AuthError(f"{path} is not a valid service-account key: {exc}") from exc
+
+
+def _service_account_credentials_from_info(raw: str) -> Any:
+    """Build service-account credentials from a key inlined in an env var.
+
+    Accepts the raw JSON or a base64 blob of it — the latter survives hosts that
+    mangle newlines in multi-line values, which a PEM private key is full of.
+    """
+    payload = raw.strip()
+    if not payload.startswith("{"):
+        try:
+            payload = base64.b64decode(payload, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise AuthError(
+                "DRIVEZIP_SERVICE_ACCOUNT_JSON is neither JSON nor valid base64"
+            ) from exc
+
+    try:
+        info = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise AuthError(f"DRIVEZIP_SERVICE_ACCOUNT_JSON is not valid JSON: {exc}") from exc
+
+    try:
+        from google.oauth2 import service_account
+    except ImportError as exc:  # pragma: no cover - depends on optional extra
+        raise AuthError(
+            "google-auth is not installed; install the extra with `pip install drivezip[google]`"
+        ) from exc
+
+    try:
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    except (ValueError, KeyError) as exc:
+        raise AuthError(f"DRIVEZIP_SERVICE_ACCOUNT_JSON is not a usable key: {exc}") from exc
 
 
 def _cached_user_credentials() -> Any | None:

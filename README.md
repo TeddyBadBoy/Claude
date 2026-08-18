@@ -167,6 +167,53 @@ with ZipArchive(source) as archive:
     print(archive.summary())
 ```
 
+## Running from a Claude Code cloud session
+
+Cloud sessions reach the network through an egress policy, so a session can only
+read Drive if the environment allows the right hosts. Configure this once, in
+the environment selector at [claude.ai/code](https://claude.ai/code) (the cloud
+icon above the message box) → **Network access** → **Custom**:
+
+```text
+www.googleapis.com
+oauth2.googleapis.com
+drive.usercontent.google.com
+```
+
+Leave **Also include default list of common package managers** checked so `pip`
+keeps working. What each host is for:
+
+| Host | Needed for |
+| --- | --- |
+| `www.googleapis.com` | the Drive API — metadata and ranged reads |
+| `oauth2.googleapis.com` | refreshing a service-account or cached user token |
+| `drive.usercontent.google.com` | `--public`, the credential-free path for link-shared files |
+
+**If the archives are shared with "anyone with the link"**, that is the whole
+setup: no credentials are stored anywhere, and `drivezip ls <id> --public` works
+in every future session.
+
+**If the archives stay private**, a session needs a credential. Cloud
+environments have no secrets store and their variables are readable by anyone
+using the environment, so use a dedicated service account that can see nothing
+but the files you share with it, rather than your own token:
+
+1. Create a service account and download its key; grant it no project roles.
+2. Share the file or folder with the service account's email as **Viewer**.
+3. Put the key in the environment's variables, base64-encoded so the PEM
+   newlines survive:
+
+   ```bash
+   base64 -w0 key.json    # paste the output as the value
+   ```
+
+   ```text
+   DRIVEZIP_SERVICE_ACCOUNT_JSON=eyJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsIC4uLg==
+   ```
+
+`drivezip` reads that variable directly, so no setup script or writable config
+directory is needed. Revoking access is deleting the key or unsharing the file.
+
 ## Safety
 
 Extraction refuses members whose paths would escape the destination directory —

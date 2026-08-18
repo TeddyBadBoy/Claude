@@ -60,6 +60,20 @@ python -m drivezip info ./some.zip --stats
 python -m drivezip ls ./some.zip -l
 ```
 
+## Reading real archives from a session
+
+Sessions reach Drive only if the cloud environment's network policy allows it.
+`www.googleapis.com` is usually reachable; `drive.usercontent.google.com` and
+`drive.google.com` are not, under the default **Trusted** access level. A 403 on
+`CONNECT` is an environment policy denial — report it, do not route around it
+(`/root/.ccr/README.md` says the same).
+
+Credentials, in the order `auth.resolve` tries them: `DRIVEZIP_ACCESS_TOKEN`,
+a service-account key file, `DRIVEZIP_SERVICE_ACCOUNT_JSON` (raw or base64 —
+the shape that fits a cloud environment's variables), a cached user token, then
+the interactive flow (which cannot run headless). README's "Running from a
+Claude Code cloud session" has the full setup.
+
 ## Git
 
 - Default branch is `main`; work happens on feature branches and lands via PR.
